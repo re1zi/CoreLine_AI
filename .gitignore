@@ -1,0 +1,8 @@
+.env
+__pycache__
+bin
+lib
+lib64
+memory
+prompts
+pyvenv.cfg

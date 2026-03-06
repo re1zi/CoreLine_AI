@@ -1,0 +1,43 @@
+# CoreLine AI - Requirements
+# Python 3.8+
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+jinja2>=3.1.0
+
+# HTTP Requests
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Web Search & Content Extraction
+ddgs>=0.1.0
+trafilatura>=1.6.0
+
+# Text-to-Speech (TTS) — по умолчанию XTTS (Coqui)
+# Для переключения на Qwen3-TTS: pip install qwen-tts и TTS_ENGINE=qwen3
+TTS>=0.20.0
+torch>=2.0.0
+numpy>=1.24.0
+# Опционально: Qwen3-TTS (альтернативный движок)
+# qwen-tts
+
+# Speech Recognition (STT)
+SpeechRecognition>=3.10.0
+
+# Audio Processing (optional, for terminal version)
+sounddevice>=0.4.6
+
+# Image Processing
+Pillow>=10.0.0
+
+# Terminal Display
+rich>=13.0.0
+
+# Morphological Analysis (optional, for memory search)
+pymorphy2>=0.9.0
+pymorphy2-dicts-ru>=2.4.0
+
+# Semantic memory (memsearch: markdown-first, vector search)
+memsearch>=0.1.10

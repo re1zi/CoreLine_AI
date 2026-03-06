@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>CoreLine AI</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <canvas id="rainCanvas"></canvas>
+    
+    <div class="container">
+        <div class="avatar-window">
+            <div class="window-header">
+                <span class="window-title">CoreLine Avatar</span>
+                <div class="window-controls">
+                    <button id="voiceBtn" class="control-btn" title="Голосовой вывод (TTS)">🔊</button>
+                    <button id="listenBtn" class="control-btn" title="Голосовой ввод (STT)">🎤</button>
+                    <button id="webBtn" class="control-btn" title="Веб-поиск">🌐</button>
+                    <button id="helpBtn" class="control-btn" title="Справка">❓</button>
+                </div>
+            </div>
+            <div class="avatar-content">
+                <img id="avatar" src="/static/avatars/idle.png" alt="CoreLine Avatar">
+            </div>
+        </div>
+        
+        <div class="terminal-window">
+            <div class="window-header">
+                <span class="window-title">Terminal</span>
+                <div class="terminal-prompt">coreline@system:~$</div>
+            </div>
+            <div class="terminal-content">
+                <div id="chat" class="chat-messages"></div>
+                <div class="input-container">
+                    <input type="file" id="fileInput" multiple accept="image/*,.pdf" style="display:none">
+                    <span class="input-prompt">></span>
+                    <button type="button" id="attachBtn" class="attach-btn" title="Прикрепить файл (изображение, PDF)">📎</button>
+                    <textarea 
+                        id="messageInput" 
+                        placeholder="Введите команду или прикрепите файл..."
+                        rows="1"
+                    ></textarea>
+                    <button id="sendBtn" class="send-btn">[ENTER]</button>
+                    <div class="attachments-preview" id="attachmentsPreview"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        const chat = document.getElementById('chat');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const avatar = document.getElementById('avatar');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const listenBtn = document.getElementById('listenBtn');
+        const webBtn = document.getElementById('webBtn');
+        const helpBtn = document.getElementById('helpBtn');
+        const attachBtn = document.getElementById('attachBtn');
+        const fileInput = document.getElementById('fileInput');
+        const attachmentsPreview = document.getElementById('attachmentsPreview');
+
+        let voiceEnabled = false;
+        let pendingAttachments = [];
+        let listenEnabled = false;
+        let webEnabled = false;
+        let isRecording = false;
+        let recognition = null;
+        
+        // Эффект пиксельного дождя
+        const canvas = document.getElementById('rainCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        const pixels = [];
+        const pixelSize = 4;
+        const pixelSpeed = 2;
+        const pixelCount = Math.floor((canvas.width * canvas.height) / 3000);
+        
+        for (let i = 0; i < pixelCount; i++) {
+            pixels.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                speed: pixelSpeed + Math.random() * 2,
+                opacity: 0.3 + Math.random() * 0.4
+            });
+        }
+        
+        function drawRain() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#5a9fd4';
+            
+            pixels.forEach(pixel => {
+                ctx.globalAlpha = pixel.opacity;
+                ctx.fillRect(pixel.x, pixel.y, pixelSize, pixelSize);
+                
+                pixel.y += pixel.speed;
+                if (pixel.y > canvas.height) {
+                    pixel.y = -pixelSize;
+                    pixel.x = Math.random() * canvas.width;
+                }
+            });
+            
+            requestAnimationFrame(drawRain);
+        }
+        
+        drawRain();
+        
+        // Инициализация Web Speech API
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = 'ru-RU';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                if (transcript.trim()) {
+                    ws.send(JSON.stringify({
+                        type: 'message',
+                        content: transcript
+                    }));
+                }
+            };
+            
+            recognition.onerror = function(event) {
+                console.error('Ошибка распознавания:', event.error);
+                let errorMsg = 'Ошибка распознавания речи';
+                if (event.error === 'no-speech') {
+                    errorMsg = 'Речь не обнаружена. Попробуйте еще раз.';
+                } else if (event.error === 'audio-capture') {
+                    errorMsg = 'Не удалось получить доступ к микрофону. Проверьте разрешения.';
+                } else if (event.error === 'not-allowed') {
+                    errorMsg = 'Доступ к микрофону запрещен. Разрешите доступ в настройках браузера.';
+                } else {
+                    errorMsg = 'Ошибка распознавания: ' + event.error;
+                }
+                addMessage('system', errorMsg);
+                isRecording = false;
+                updateListenButton();
+            };
+            
+            recognition.onend = function() {
+                isRecording = false;
+                updateListenButton();
+            };
+            
+            recognition.onstart = function() {
+                addMessage('system', 'Запись начата...');
+            };
+        } else {
+            console.warn('Web Speech API не поддерживается в этом браузере');
+        }
+        
+        function updateListenButton() {
+            if (isRecording) {
+                listenBtn.classList.add('recording');
+                listenBtn.textContent = '⏹️';
+            } else {
+                listenBtn.classList.remove('recording');
+                listenBtn.textContent = '🎤';
+            }
+        }
+
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const prompt = document.createElement('span');
+            prompt.className = 'message-prompt';
+            if (role === 'user') {
+                prompt.textContent = 'user@coreline:~$ ';
+            } else if (role === 'assistant') {
+                prompt.textContent = 'coreline@system:~$ ';
+            } else {
+                prompt.textContent = '[SYSTEM] ';
+            }
+            
+            const contentSpan = document.createElement('span');
+            contentSpan.className = 'message-content';
+            contentSpan.textContent = content;
+            
+            messageDiv.appendChild(prompt);
+            messageDiv.appendChild(contentSpan);
+            chat.appendChild(messageDiv);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function updateAvatar(state) {
+            avatar.src = `/static/avatars/${state}.png`;
+            avatar.onerror = function() {
+                this.src = '/static/avatars/idle.png';
+            };
+        }
+
+        function updateButtons() {
+            voiceBtn.classList.toggle('active', voiceEnabled);
+            webBtn.classList.toggle('active', webEnabled);
+        }
+
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        
+        async function playAudio(audioBase64) {
+            if (isPlayingAudio) {
+                audioQueue.push(audioBase64);
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audio = new Audio('data:audio/wav;base64,' + audioBase64);
+            
+            audio.onended = function() {
+                isPlayingAudio = false;
+                if (audioQueue.length > 0) {
+                    playAudio(audioQueue.shift());
+                }
+            };
+            
+            audio.onerror = function(e) {
+                console.error('Ошибка воспроизведения аудио:', e);
+                isPlayingAudio = false;
+                if (audioQueue.length > 0) {
+                    playAudio(audioQueue.shift());
+                }
+            };
+            
+            try {
+                await audio.play();
+            } catch (e) {
+                console.error('Не удалось воспроизвести аудио:', e);
+                isPlayingAudio = false;
+                if (audioQueue.length > 0) {
+                    playAudio(audioQueue.shift());
+                }
+            }
+        }
+        
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'message') {
+                addMessage(data.data.role, data.data.content);
+            } else if (data.type === 'run_confirm') {
+                const lines = (data.data.commands || []).map((c, i) => `${i + 1}) ${c}`).join('\n');
+                const text = (data.data.prompt || '') + (lines ? '\n\n' + lines : '');
+                addMessage('system', text);
+            } else if (data.type === 'avatar') {
+                updateAvatar(data.data.state);
+            } else if (data.type === 'audio') {
+                if (voiceEnabled) {
+                    playAudio(data.data.data);
+                }
+            }
+        };
+
+        ws.onopen = function() {
+            addMessage('system', 'Подключено к CoreLine...');
+        };
+
+        ws.onerror = function(error) {
+            addMessage('system', 'Ошибка подключения: ' + error);
+        };
+
+        ws.onclose = function() {
+            addMessage('system', 'Соединение закрыто');
+        };
+
+        function getMimeType(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const map = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
+            return map[ext] || 'application/octet-stream';
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const b64 = reader.result.split(',')[1];
+                    resolve(b64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            const attachments = pendingAttachments;
+            if (!message && attachments.length === 0) return;
+            
+            const payload = { type: 'message', content: message };
+            if (attachments.length > 0) {
+                const attData = [];
+                for (const f of attachments) {
+                    attData.push({ data: f.b64, type: f.type, name: f.name });
+                }
+                payload.attachments = attData;
+            }
+            ws.send(JSON.stringify(payload));
+            
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            pendingAttachments = [];
+            renderAttachments();
+        }
+
+        function renderAttachments() {
+            attachmentsPreview.innerHTML = '';
+            pendingAttachments.forEach((f, i) => {
+                const span = document.createElement('span');
+                span.className = 'attachment-chip';
+                span.textContent = f.name + ' ×';
+                span.onclick = () => {
+                    pendingAttachments.splice(i, 1);
+                    renderAttachments();
+                };
+                attachmentsPreview.appendChild(span);
+            });
+        }
+
+        attachBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', async function() {
+            for (const file of this.files || []) {
+                if (file.size > 20 * 1024 * 1024) continue;
+                const b64 = await fileToBase64(file);
+                pendingAttachments.push({ b64, type: getMimeType(file.name), name: file.name });
+            }
+            this.value = '';
+            renderAttachments();
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+
+        voiceBtn.addEventListener('click', function() {
+            const command = voiceEnabled ? '*voiceoff' : '*voiceon';
+            ws.send(JSON.stringify({ type: 'message', content: command }));
+            voiceEnabled = !voiceEnabled;
+            updateButtons();
+        });
+
+        listenBtn.addEventListener('click', function() {
+            if (!recognition) {
+                addMessage('system', 'Голосовой ввод не поддерживается в этом браузере. Используйте Chrome или Edge.');
+                return;
+            }
+            
+            if (isRecording) {
+                recognition.stop();
+                isRecording = false;
+                updateListenButton();
+            } else {
+                try {
+                    recognition.start();
+                    isRecording = true;
+                    updateListenButton();
+                } catch (e) {
+                    console.error('Ошибка запуска распознавания:', e);
+                    addMessage('system', 'Не удалось начать запись. Проверьте разрешения микрофона.');
+                    isRecording = false;
+                    updateListenButton();
+                }
+            }
+        });
+
+        webBtn.addEventListener('click', function() {
+            const command = webEnabled ? '*woff' : '*won';
+            ws.send(JSON.stringify({ type: 'message', content: command }));
+            webEnabled = !webEnabled;
+            updateButtons();
+        });
+
+        helpBtn.addEventListener('click', function() {
+            ws.send(JSON.stringify({ type: 'message', content: '*help' }));
+        });
+
+        ws.addEventListener('message', function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'message' && data.data.role === 'system') {
+                const content = data.data.content;
+                if (content.includes('Голосовой вывод XTTS включён')) {
+                    voiceEnabled = true;
+                } else if (content.includes('Голосовой вывод выключен')) {
+                    voiceEnabled = false;
+                } else if (content.includes('Веб-поиск включен')) {
+                    webEnabled = true;
+                } else if (content.includes('Веб-поиск выключен')) {
+                    webEnabled = false;
+                }
+                updateButtons();
+            }
+        });
+    </script>
+</body>
+</html>
