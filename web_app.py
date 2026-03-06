@@ -31,8 +31,8 @@ from voice import (
 app = FastAPI()
 
 # Простая конфигурация логина
-AUTH_USERNAME = os.getenv("WEB_LOGIN_USERNAME", "reizi")
-AUTH_PASSWORD = os.getenv("WEB_LOGIN_PASSWORD", "5P5PUSvCmt5V")
+AUTH_USERNAME = os.getenv("WEB_LOGIN_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("WEB_LOGIN_PASSWORD", "admin")
 AUTH_COOKIE_NAME = "coreline_auth"
 AUTH_COOKIE_VALUE = os.getenv("WEB_LOGIN_TOKEN", "ok")
 
