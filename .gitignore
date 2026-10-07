@@ -5,3 +5,5 @@ speaker1.wav
 vosk-model-ru-0.22.zip
 .env
 tui/coreline-tui
+prompts/
+memory/
