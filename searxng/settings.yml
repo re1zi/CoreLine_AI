@@ -1,0 +1,19 @@
+use_default_settings: true
+
+general:
+  instance_name: CoreLine SearXNG
+
+server:
+  secret_key: "coreline-local-searxng-not-for-public"
+  limiter: false
+  image_proxy: false
+  method: GET
+  public_instance: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "auto"
+  formats:
+    - html
+    - json

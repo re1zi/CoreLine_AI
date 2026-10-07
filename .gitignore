@@ -1,0 +1,9 @@
+prompts/
+output.mp3
+memory/
+__pycache__/
+.venv/
+speaker1.wav
+vosk-model-ru-0.22.zip
+.env
+tui/coreline-tui

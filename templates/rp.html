@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>CoreLine AI - RP</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <canvas id="rainCanvas"></canvas>
+
+    <div class="container rp-container">
+        <div class="terminal-window">
+            <div class="window-header rp-header">
+                <span class="window-title">Terminal RP</span>
+                <button id="rpModeBtn" class="control-btn rp-mode-btn active" title="Вернуться в обычный режим">RP</button>
+                <button id="clearHistoryBtn" class="control-btn rp-clear-btn" title="Очистить историю RP-чата">CLR</button>
+                <div class="terminal-prompt">coreline@rp:~$</div>
+            </div>
+            <div class="terminal-content">
+                <div id="chat" class="chat-messages"></div>
+                <div class="input-container">
+                    <input type="file" id="fileInput" multiple accept="image/*,.pdf" style="display:none">
+                    <span class="input-prompt">></span>
+                    <button type="button" id="attachBtn" class="attach-btn" title="Прикрепить файл (изображение, PDF)">📎</button>
+                    <textarea
+                        id="messageInput"
+                        placeholder="Введите сообщение для RP..."
+                        rows="1"
+                    ></textarea>
+                    <button id="sendBtn" class="send-btn">[ENTER]</button>
+                    <div class="attachments-preview" id="attachmentsPreview"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/chat_edit.js"></script>
+    <script>
+        const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws_rp`);
+        const chat = document.getElementById('chat');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const rpModeBtn = document.getElementById('rpModeBtn');
+        const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+        const attachBtn = document.getElementById('attachBtn');
+        const fileInput = document.getElementById('fileInput');
+        const attachmentsPreview = document.getElementById('attachmentsPreview');
+        const RP_HISTORY_KEY = 'coreline_rp_history_v1';
+
+        let pendingAttachments = [];
+
+        const canvas = document.getElementById('rainCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        const pixels = [];
+        const pixelSize = 4;
+        const pixelSpeed = 2;
+        const pixelCount = Math.floor((canvas.width * canvas.height) / 3000);
+
+        for (let i = 0; i < pixelCount; i++) {
+            pixels.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                speed: pixelSpeed + Math.random() * 2,
+                opacity: 0.3 + Math.random() * 0.4
+            });
+        }
+
+        function drawRain() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#5a9fd4';
+            pixels.forEach(pixel => {
+                ctx.globalAlpha = pixel.opacity;
+                ctx.fillRect(pixel.x, pixel.y, pixelSize, pixelSize);
+                pixel.y += pixel.speed;
+                if (pixel.y > canvas.height) {
+                    pixel.y = -pixelSize;
+                    pixel.x = Math.random() * canvas.width;
+                }
+            });
+            requestAnimationFrame(drawRain);
+        }
+        drawRain();
+
+        const chatEdit = setupChatEditing({
+            chat: chat,
+            getWs: function () { return ws; },
+            prompts: {
+                user: 'user@coreline:~$ ',
+                assistant: 'coreline@rp:~$ ',
+                system: '[SYSTEM] '
+            },
+            onHistoryChange: saveHistory
+        });
+
+        function addMessage(role, content, id) {
+            return chatEdit.addMessage(role, content, id);
+        }
+
+        function saveHistory() {
+            const items = [];
+            const rows = chat.querySelectorAll('.message');
+            rows.forEach(row => {
+                const role = row.classList.contains('user') ? 'user' :
+                    row.classList.contains('assistant') ? 'assistant' : 'system';
+                const content = row.querySelector('.message-content')?.textContent || '';
+                items.push({ role, content, id: row.dataset.id || '' });
+            });
+            localStorage.setItem(RP_HISTORY_KEY, JSON.stringify(items));
+        }
+
+        function loadHistory() {
+            try {
+                const raw = localStorage.getItem(RP_HISTORY_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) return [];
+                return parsed.filter(item => item && typeof item.content === 'string');
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function restoreHistoryToChat(items) {
+            chat.innerHTML = '';
+            items.forEach(item => {
+                const role = item.role || 'system';
+                let id = item.id || '';
+                if (!id && (role === 'user' || role === 'assistant') && typeof crypto.randomUUID === 'function') {
+                    id = crypto.randomUUID();
+                    item.id = id;
+                }
+                addMessage(role, item.content, id);
+            });
+        }
+
+        function getMimeType(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const map = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf' };
+            return map[ext] || 'application/octet-stream';
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            const attachments = pendingAttachments;
+            if (!message && attachments.length === 0) return;
+
+            const payload = { type: 'message', content: message };
+            if (attachments.length > 0) {
+                payload.attachments = attachments.map(f => ({ data: f.b64, type: f.type, name: f.name }));
+            }
+            ws.send(JSON.stringify(payload));
+            chatEdit.setBusy(true);
+
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            pendingAttachments = [];
+            renderAttachments();
+        }
+
+        function renderAttachments() {
+            attachmentsPreview.innerHTML = '';
+            pendingAttachments.forEach((f, i) => {
+                const span = document.createElement('span');
+                span.className = 'attachment-chip';
+                span.textContent = f.name + ' ×';
+                span.onclick = () => {
+                    pendingAttachments.splice(i, 1);
+                    renderAttachments();
+                };
+                attachmentsPreview.appendChild(span);
+            });
+        }
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            chatEdit.handleServerEvent(data);
+        };
+
+        ws.onopen = function() {
+            const history = loadHistory();
+            if (history.length > 0) {
+                restoreHistoryToChat(history);
+                const modelHistory = history.filter(item => item.role === 'user' || item.role === 'assistant');
+                ws.send(JSON.stringify({ type: 'init_history', history: modelHistory }));
+            } else {
+                addMessage('system', 'Подключено к RP-режиму CoreLine...');
+                saveHistory();
+            }
+        };
+
+        ws.onerror = function(error) {
+            addMessage('system', 'Ошибка подключения: ' + error);
+            saveHistory();
+        };
+
+        ws.onclose = function() {
+            addMessage('system', 'Соединение закрыто');
+            saveHistory();
+        };
+
+        attachBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', async function() {
+            for (const file of this.files || []) {
+                if (file.size > 20 * 1024 * 1024) continue;
+                const b64 = await fileToBase64(file);
+                pendingAttachments.push({ b64, type: getMimeType(file.name), name: file.name });
+            }
+            this.value = '';
+            renderAttachments();
+        });
+
+        messageInput.addEventListener('paste', function(e) {
+            const items = Array.from(e.clipboardData.items);
+            const imageItems = items.filter(it => it.type.startsWith('image/'));
+            if (imageItems.length === 0) return;
+
+            e.preventDefault();
+
+            let text = e.clipboardData.getData('text/plain');
+            if (text) {
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
+                const before = this.value.slice(0, start);
+                const after = this.value.slice(end);
+                this.value = before + text + after;
+                this.selectionStart = this.selectionEnd = start + text.length;
+                this.style.height = 'auto';
+                this.style.height = this.scrollHeight + 'px';
+            }
+
+            for (const item of imageItems) {
+                const file = item.getAsFile();
+                if (!file || file.size > 20 * 1024 * 1024) continue;
+                const mime = item.type;
+                const ext = mime.split('/')[1] || 'png';
+                fileToBase64(file).then(b64 => {
+                    pendingAttachments.push({ b64, type: mime, name: '📋 clipboard.' + ext });
+                    renderAttachments();
+                });
+            }
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+
+        rpModeBtn.addEventListener('click', function() {
+            window.location.href = '/';
+        });
+
+        clearHistoryBtn.addEventListener('click', function() {
+            chat.innerHTML = '';
+            localStorage.removeItem(RP_HISTORY_KEY);
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'clear_history' }));
+            } else {
+                addMessage('system', 'История RP-чата очищена.');
+                saveHistory();
+            }
+        });
+    </script>
+</body>
+</html>

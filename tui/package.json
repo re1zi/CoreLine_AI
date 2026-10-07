@@ -1,0 +1,18 @@
+{
+  "name": "coreline-opentui-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun build --compile --outfile coreline-tui src/index.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/bun": "latest"
+  }
+}
