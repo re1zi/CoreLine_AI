@@ -1,6 +1,4 @@
-prompts/
 output.mp3
-memory/
 __pycache__/
 .venv/
 speaker1.wav
